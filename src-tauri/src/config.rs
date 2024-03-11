@@ -1,13 +1,63 @@
-use tauri::App;
-
 use crate::{
     model::{AppConfig, MacropadData},
     APP_HANDLE,
 };
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::io::{self, Read, Write};
 use std::{
-    fs::{self, File},
-    io::Write,
+    fs::{self, File, OpenOptions},
+    path::PathBuf,
 };
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ConfigFile<T> {
+    data: T,
+}
+
+impl<T> ConfigFile<T>
+where
+    T: DeserializeOwned + Serialize,
+{
+    pub fn new(data: T) -> Self {
+        ConfigFile { data }
+    }
+    fn parent_dir(file_name: &str) -> PathBuf {
+        match APP_HANDLE.get().unwrap().path_resolver().app_data_dir() {
+            Some(path) => {
+                if !path.exists() {
+                    let _ = fs::create_dir_all(path.to_string_lossy().to_string());
+                }
+                path.join(file_name)
+            }
+            None => panic!("appdir not found"),
+        }
+    }
+    pub fn get_data(&self) -> &T {
+        &self.data
+    }
+
+    pub fn read_config(file_name: &str) -> io::Result<Self> {
+        let file_path = ConfigFile::<PathBuf>::parent_dir(file_name);
+        let file = File::open(file_path)?;
+        let reader = io::BufReader::new(file);
+        let data: T = serde_json::from_reader(reader)?;
+        Ok(ConfigFile { data })
+    }
+
+    pub fn write_config(&self, file_name: &str) -> io::Result<()> {
+        let file_path = ConfigFile::<PathBuf>::parent_dir(file_name);
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(file_path)?;
+
+        serde_json::to_writer_pretty(file, &self.data)?;
+
+        Ok(())
+    }
+}
+
 pub fn read_action_lists() -> Vec<String> {
     let mut config_data: Vec<String> = Vec::new();
     match APP_HANDLE.get().unwrap().path_resolver().app_data_dir() {
@@ -71,8 +121,41 @@ pub fn read_config() -> Vec<MacropadData> {
     config_data
 }
 
-// Function to read AppConfig from a JSON file
 pub fn read_app_config() -> Result<AppConfig, std::io::Error> {
+    let config_name = "app_config.json";
+    match ConfigFile::<AppConfig>::read_config(&config_name) {
+        Ok(result) => Ok(result.get_data().clone()),
+        Err(_) => {
+            let config = ConfigFile::new(AppConfig {
+                click_throught: false,
+                always_on_top: false,
+            });
+            config.write_config(&config_name)?;
+            Ok(config.get_data().clone())
+        }
+    }
+}
+pub fn write_app_config(config: AppConfig) -> Result<(), std::io::Error> {
+    let config_name = "app_config.json";
+    let config_file = ConfigFile::<AppConfig>::new(config);
+    config_file.write_config(config_name)?;
+    Ok(())
+}
+
+pub fn read_macropad_config() -> Result<Vec<MacropadData>, std::io::Error> {
+    let config_name = "config.json";
+    match ConfigFile::<Vec<MacropadData>>::read_config(&config_name) {
+        Ok(result) => Ok(result.get_data().clone()),
+        Err(_) => {
+            let config = ConfigFile::new(Vec::new());
+            config.write_config(&config_name)?;
+            Ok(config.get_data().clone())
+        }
+    }
+}
+
+// Function to read AppConfig from a JSON file
+fn _read_app_config() -> Result<AppConfig, std::io::Error> {
     match APP_HANDLE.get().unwrap().path_resolver().app_data_dir() {
         Some(path) => {
             if !path.exists() {
@@ -90,7 +173,7 @@ pub fn read_app_config() -> Result<AppConfig, std::io::Error> {
                     click_throught: false,
                     always_on_top: false,
                 };
-                let _ = write_app_config(&default_config);
+                let _ = write_app_config(default_config.clone());
                 Ok(default_config)
             }
         }
@@ -102,7 +185,7 @@ pub fn read_app_config() -> Result<AppConfig, std::io::Error> {
 }
 
 // Function to write AppConfig to a JSON file
-pub fn write_app_config(config: &AppConfig) -> Result<(), std::io::Error> {
+fn _write_app_config(config: &AppConfig) -> Result<(), std::io::Error> {
     match APP_HANDLE.get().unwrap().path_resolver().app_data_dir() {
         Some(path) => {
             if !path.exists() {

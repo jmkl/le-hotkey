@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { BaseDirectory, readTextFile } from "@tauri-apps/api/fs";
   import { onMount } from "svelte";
+  import { LogicalSize, appWindow } from "@tauri-apps/api/window";
   let keys = null;
   let configs = null;
   let filtered_config = null;
@@ -11,6 +12,17 @@
   let progress = 0;
   listen("modkey_event", (result) => {
     keys = result.payload;
+
+    if (keys.reset) {
+      keys = { ...keys, mod_pressed: false };
+      console.log(keys);
+      doFilter(configs);
+      return;
+    }
+    if (!keys.multikey && !keys.mode_pressed) {
+      doFilter(configs);
+      return;
+    }
 
     if (keys.key_1) {
       invoke("filter_keys", { key: keys.key_1 }).then((result) => {
@@ -40,8 +52,8 @@
   function processProgress() {
     progress += 5;
 
-    if (progress > 320) {
-      progress = 300;
+    if (progress > 500) {
+      progress = 500;
       clearInterval(progressId);
     }
   }
@@ -57,8 +69,16 @@
     readTextFile("config.json", { dir: BaseDirectory.AppData }).then(
       (result) => {
         configs = JSON.parse(result);
+        keys = {
+          reset: true,
+          mod_pressed: false,
+          key_1: "",
+          key_2: "",
+        };
+        doFilter(configs);
       }
     );
+    appWindow.setSize(new LogicalSize(400, 150));
   });
   let current_desc = "";
   let pads = [
@@ -93,14 +113,25 @@
   //   }
   // }
 
-  function key(keys) {
-    return `Combo: ${keys.key_1}${keys.key_2 != "" ? "-" + keys.key_2 : " _"}`;
+  function key(k) {
+    return `Combo: ${k.key_1}${k.key_2 != "" ? "-" + k.key_2 : " _"}`;
   }
 </script>
 
 <div
-  class="flex overflow-hidden bg-black/50 rounded-lg flex-col select-none h-screen w-screen"
+  class="absolute top-0 left-0 pointer-events-none overflow-hidden h-full w-full z-50"
 >
+  <div
+    style="width:{progress * 1}px;height:{progress * 1}px;opacity:{progress /
+      5 /
+      100};"
+    class="{progress >= 500
+      ? 'bg-success'
+      : 'bg-white'} w-10 h-10 rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 relative"
+  ></div>
+</div>
+
+<div class="flex overflow-hidden flex-col select-none h-screen w-screen">
   <div class="flex items-center">
     {#if keys}
       {#if keys.mod_pressed}
@@ -121,11 +152,8 @@
       {current_desc}
     </div>
   </div>
+
   {#if filtered_config && filtered_config.filter((e) => e != null).length > 0}
-    <div
-      style="width:{Math.floor(progress / 3)}%;"
-      class="h-[1px] top-0 left-0 overflow-hidden bg-white"
-    ></div>
     <div class="grid grid-cols-4 overflow-hidden">
       {#each filtered_config as key, i}
         <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -163,7 +191,11 @@
       {/each}
     </div>
   {:else}
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
+      on:mouseenter={() => {
+        current_desc = "";
+      }}
       class="flex text-center h-screen w-screen justify-center items-center text-4xl text-white/10 absolute"
     >
       None

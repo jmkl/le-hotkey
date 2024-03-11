@@ -1,21 +1,21 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
-use std::cell::OnceCell;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
-
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 use config::read_action_lists;
 use config::read_app_config;
 use config::read_config;
 use global_hotkey::GlobalHotKeyEvent;
 use macropad::MacropPad;
+use model::AppConfig;
 use model::MacropadData;
+use std::sync::OnceLock;
+use std::time::Duration;
 use tauri::SystemTray;
 use tauri::SystemTrayEvent;
-use tauri::Window;
 use tauri::{AppHandle, CustomMenuItem, Manager, SystemTrayMenu, SystemTrayMenuItem};
+use window_vibrancy::{apply_acrylic, apply_mica};
 
 use crate::config::write_app_config;
 
@@ -24,7 +24,6 @@ mod macropad;
 mod model;
 
 pub static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
-pub static KLIKTRU: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -57,22 +56,25 @@ fn setting_up_tray() -> SystemTray {
 }
 
 fn main() {
-    KLIKTRU.get_or_init(|| Arc::new(Mutex::new(false)));
     let system_tray = setting_up_tray();
     let mut macropad = MacropPad::new().expect("failed");
     let _hotkey_manager = &macropad.register();
     let global_hotkey_channel = GlobalHotKeyEvent::receiver();
 
-    let window = tauri::Builder::default()
+    tauri::Builder::default()
         .setup(move |app| {
+            let window = app.get_window("main").unwrap();
+            #[cfg(target_os = "windows")]
+            apply_mica(&window, None)
+                .expect("Unsupported platform! 'apply_blur' is only supported on Windows");
             APP_HANDLE.set(app.app_handle()).unwrap();
-            let config = read_config();
-            println!("{config:?}");
+
             tauri::async_runtime::spawn(async move {
                 loop {
                     if let Ok(event) = global_hotkey_channel.try_recv() {
                         let _ = &macropad.process_key(&event);
                     }
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             });
             Ok(())
@@ -80,7 +82,7 @@ fn main() {
         .system_tray(system_tray)
         .on_system_tray_event(|app, event| match event {
             SystemTrayEvent::LeftClick { .. } => {}
-            SystemTrayEvent::MenuItemClick { tray_id, id, .. } => match id.as_str() {
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
                 "quit" => {
                     std::process::exit(0);
                 }
@@ -89,12 +91,12 @@ fn main() {
                         let _ = window.set_always_on_top(true);
                         let mut config = read_app_config().unwrap();
                         config.click_throught = !config.click_throught;
-                        write_app_config(&config);
+                        let _ = write_app_config(config.clone());
                         let item_handle = app.tray_handle().get_item(&id);
-                        item_handle
+                        let _ = item_handle
                             .set_title(format!("Click throught : {}", &config.click_throught))
                             .unwrap();
-                        window.set_ignore_cursor_events(config.click_throught);
+                        let _ = window.set_ignore_cursor_events(config.click_throught);
                     }
                     None => println!("not found window"),
                 },
